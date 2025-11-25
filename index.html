@@ -225,9 +225,30 @@
                 const photo = photos.find(p => p.id === photoId);
                 if (!photo) return;
 
+                // Update UI immediately (optimistic update)
+                const newLikedPhotos = new Set(likedPhotos);
+                const updatedPhotos = photos.map(p => {
+                    if (p.id === photoId) {
+                        return {
+                            ...p,
+                            likes: isLiked ? Math.max(0, p.likes - 1) : p.likes + 1
+                        };
+                    }
+                    return p;
+                });
+
+                if (isLiked) {
+                    newLikedPhotos.delete(photoId);
+                } else {
+                    newLikedPhotos.add(photoId);
+                }
+
+                setLikedPhotos(newLikedPhotos);
+                setPhotos(updatedPhotos);
+
+                // Then update database in background
                 try {
                     if (isLiked) {
-                        // Unlike
                         await supabaseClient
                             .from('photo_likes')
                             .delete()
@@ -238,12 +259,7 @@
                             .from('photos')
                             .update({ likes: Math.max(0, photo.likes - 1) })
                             .eq('id', photoId);
-
-                        const newLikedPhotos = new Set(likedPhotos);
-                        newLikedPhotos.delete(photoId);
-                        setLikedPhotos(newLikedPhotos);
                     } else {
-                        // Like
                         await supabaseClient
                             .from('photo_likes')
                             .insert([{ photo_id: photoId, user_id: userId }]);
@@ -252,16 +268,12 @@
                             .from('photos')
                             .update({ likes: photo.likes + 1 })
                             .eq('id', photoId);
-
-                        const newLikedPhotos = new Set(likedPhotos);
-                        newLikedPhotos.add(photoId);
-                        setLikedPhotos(newLikedPhotos);
                     }
-
-                    // Refresh photos to get updated counts
-                    await loadPhotos();
                 } catch (error) {
                     console.error('Error updating like:', error);
+                    // Revert on error
+                    setLikedPhotos(likedPhotos);
+                    setPhotos(photos);
                 }
             };
 
@@ -287,26 +299,26 @@
                     return;
                 }
 
-                try {
-                    // Delete likes first
-                    await supabaseClient
-                        .from('photo_likes')
-                        .delete()
-                        .eq('photo_id', photoId);
+                // Remove from UI immediately
+                const filteredPhotos = photos.filter(p => p.id !== photoId);
+                setPhotos(filteredPhotos);
 
-                    // Then delete photo
+                try {
+                    // Delete from database
                     const { error } = await supabaseClient
                         .from('photos')
                         .delete()
                         .eq('id', photoId);
 
-                    if (error) throw error;
-
-                    // Refresh photos
-                    await loadPhotos();
+                    if (error) {
+                        console.error('Delete error:', error);
+                        throw error;
+                    }
                 } catch (error) {
                     console.error('Error deleting photo:', error);
-                    alert('Failed to delete photo. Please try again.');
+                    alert('Failed to delete photo: ' + error.message);
+                    // Reload photos to restore if delete failed
+                    await loadPhotos();
                 }
             };
 
