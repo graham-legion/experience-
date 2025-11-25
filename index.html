@@ -116,13 +116,20 @@
                     setIsAdmin(true);
                 }
 
-                // Set up real-time subscription
+                // Set up real-time subscription for new photos only
                 const photosSubscription = supabaseClient
                     .channel('photos_channel')
                     .on('postgres_changes', 
-                        { event: '*', schema: 'public', table: 'photos' },
+                        { event: 'INSERT', schema: 'public', table: 'photos' },
                         (payload) => {
-                            console.log('Photo change:', payload);
+                            console.log('New photo added:', payload);
+                            loadPhotos();
+                        }
+                    )
+                    .on('postgres_changes', 
+                        { event: 'DELETE', schema: 'public', table: 'photos' },
+                        (payload) => {
+                            console.log('Photo deleted:', payload);
                             loadPhotos();
                         }
                     )
