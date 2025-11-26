@@ -210,35 +210,47 @@
                 try {
                     const reader = new FileReader();
                     reader.onloadend = async () => {
-                        const { data, error } = await supabaseClient
-                            .from('photos')
-                            .insert([
-                                {
-                                    guest_name: guestName.trim(),
-                                    image_data: reader.result,
-                                    timestamp: Date.now(),
-                                    likes: 0,
-                                    media_type: mediaType
-                                }
-                            ])
-                            .select();
+                        try {
+                            console.log('Uploading with media_type:', mediaType);
+                            const { data, error } = await supabaseClient
+                                .from('photos')
+                                .insert([
+                                    {
+                                        guest_name: guestName.trim(),
+                                        image_data: reader.result,
+                                        timestamp: Date.now(),
+                                        likes: 0,
+                                        media_type: mediaType || 'image'
+                                    }
+                                ])
+                                .select();
 
-                        if (error) throw error;
+                            if (error) {
+                                console.error('Supabase error:', error);
+                                throw error;
+                            }
 
-                        // Refresh photos
-                        await loadPhotos();
-                        
-                        setShowUploadModal(false);
-                        setSelectedImage(null);
-                        setPreviewUrl(null);
-                        setGuestName('');
-                        setMediaType('');
-                        setIsUploading(false);
+                            console.log('Upload successful:', data);
+
+                            // Refresh photos
+                            await loadPhotos();
+                            
+                            setShowUploadModal(false);
+                            setSelectedImage(null);
+                            setPreviewUrl(null);
+                            setGuestName('');
+                            setMediaType('');
+                            setIsUploading(false);
+                        } catch (innerError) {
+                            console.error('Inner upload error:', innerError);
+                            alert('Upload failed: ' + innerError.message);
+                            setIsUploading(false);
+                        }
                     };
                     reader.readAsDataURL(selectedImage);
                 } catch (error) {
-                    console.error('Error uploading photo:', error);
-                    alert('Failed to upload photo. Please try again.');
+                    console.error('Error uploading:', error);
+                    alert('Failed to upload: ' + error.message);
                     setIsUploading(false);
                 }
             };
@@ -426,7 +438,7 @@
                                         className="bg-white rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-all duration-300 hover:shadow-2xl"
                                     >
                                         <div className="aspect-square overflow-hidden bg-gray-100 relative">
-                                            {photo.media_type === 'video' ? (
+                                            {photo.media_type === 'video' || photo.image_data?.startsWith('data:video') ? (
                                                 <video
                                                     src={photo.image_data}
                                                     controls
@@ -521,6 +533,7 @@
                                             onChange={(e) => setGuestName(e.target.value)}
                                             placeholder="Enter your name"
                                             className="w-full px-4 py-2 border-2 border-rose-200 rounded-lg focus:outline-none focus:border-rose-400 transition-colors"
+                                            disabled={isUploading}
                                         />
                                     </div>
 
@@ -530,26 +543,36 @@
                                         </label>
                                         <input
                                             type="file"
-                                            accept="image/*"
+                                            accept="image/*,video/*"
                                             onChange={handleFileSelect}
                                             className="hidden"
                                             id="photo-upload"
+                                            disabled={isUploading}
                                         />
                                         <label
                                             htmlFor="photo-upload"
-                                            className="w-full h-48 border-2 border-dashed border-rose-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-rose-400 hover:bg-rose-50 transition-all"
+                                            className={`w-full h-48 border-2 border-dashed border-rose-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-rose-400 hover:bg-rose-50 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
                                         >
                                             {previewUrl ? (
-                                                <img
-                                                    src={previewUrl}
-                                                    alt="Preview"
-                                                    className="w-full h-full object-cover rounded-lg"
-                                                />
+                                                mediaType === 'video' ? (
+                                                    <video
+                                                        src={previewUrl}
+                                                        className="w-full h-full object-cover rounded-lg"
+                                                        controls
+                                                        playsInline
+                                                    />
+                                                ) : (
+                                                    <img
+                                                        src={previewUrl}
+                                                        alt="Preview"
+                                                        className="w-full h-full object-cover rounded-lg"
+                                                    />
+                                                )
                                             ) : (
                                                 <>
                                                     <Upload size={40} className="text-rose-400 mb-2" />
                                                     <p className="text-rose-600 font-medium">Click to upload</p>
-                                                    <p className="text-sm text-gray-500 mt-1">JPG, PNG or GIF (max 5MB)</p>
+                                                    <p className="text-sm text-gray-500 mt-1">Photo (max 5MB) or Video (max 50MB)</p>
                                                 </>
                                             )}
                                         </label>
