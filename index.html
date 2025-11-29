@@ -186,10 +186,10 @@
                         return;
                     }
 
-                    // Check file size (limit to 20MB for videos, 5MB for images)
-                    const maxSize = file.type.startsWith('video/') ? 20 * 1024 * 1024 : 5 * 1024 * 1024;
+                    // Check file size (limit to 50MB for videos, 10MB for images)
+                    const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
                     if (file.size > maxSize) {
-                        const maxSizeMB = file.type.startsWith('video/') ? '20MB' : '5MB';
+                        const maxSizeMB = file.type.startsWith('video/') ? '50MB' : '10MB';
                         alert(`File too large! Please choose a file under ${maxSizeMB}.`);
                         return;
                     }
@@ -208,71 +208,37 @@
 
                 setIsUploading(true);
                 try {
-                    let mediaUrl;
-                    
-                    // For videos, upload to Supabase Storage
-                    if (mediaType === 'video') {
-                        const fileName = `${Date.now()}_${selectedImage.name}`;
-                        const { data: uploadData, error: uploadError } = await supabaseClient
-                            .storage
-                            .from('wedding-videos')
-                            .upload(fileName, selectedImage, {
-                                contentType: selectedImage.type
-                            });
+                    const reader = new FileReader();
+                    reader.onloadend = async () => {
+                        const { data, error } = await supabaseClient
+                            .from('photos')
+                            .insert([
+                                {
+                                    guest_name: guestName.trim(),
+                                    image_data: reader.result,
+                                    timestamp: Date.now(),
+                                    likes: 0,
+                                    media_type: mediaType
+                                }
+                            ])
+                            .select();
 
-                        if (uploadError) {
-                            console.error('Storage upload error:', uploadError);
-                            throw new Error('Video upload failed. Please try a smaller video (under 20MB).');
-                        }
+                        if (error) throw error;
 
-                        // Get public URL
-                        const { data: urlData } = supabaseClient
-                            .storage
-                            .from('wedding-videos')
-                            .getPublicUrl(fileName);
+                        // Refresh photos
+                        await loadPhotos();
                         
-                        mediaUrl = urlData.publicUrl;
-                    } else {
-                        // For images, use base64 as before
-                        const reader = new FileReader();
-                        mediaUrl = await new Promise((resolve, reject) => {
-                            reader.onloadend = () => resolve(reader.result);
-                            reader.onerror = reject;
-                            reader.readAsDataURL(selectedImage);
-                        });
-                    }
-
-                    // Save to database
-                    const { data, error } = await supabaseClient
-                        .from('photos')
-                        .insert([
-                            {
-                                guest_name: guestName.trim(),
-                                image_data: mediaUrl,
-                                timestamp: Date.now(),
-                                likes: 0,
-                                media_type: mediaType || 'image'
-                            }
-                        ])
-                        .select();
-
-                    if (error) {
-                        console.error('Database error:', error);
-                        throw error;
-                    }
-
-                    // Refresh photos
-                    await loadPhotos();
-                    
-                    setShowUploadModal(false);
-                    setSelectedImage(null);
-                    setPreviewUrl(null);
-                    setGuestName('');
-                    setMediaType('');
-                    setIsUploading(false);
+                        setShowUploadModal(false);
+                        setSelectedImage(null);
+                        setPreviewUrl(null);
+                        setGuestName('');
+                        setMediaType('');
+                        setIsUploading(false);
+                    };
+                    reader.readAsDataURL(selectedImage);
                 } catch (error) {
-                    console.error('Error uploading:', error);
-                    alert(error.message || 'Failed to upload. Please try again.');
+                    console.error('Error uploading photo:', error);
+                    alert('Failed to upload photo. Please try again.');
                     setIsUploading(false);
                 }
             };
@@ -460,7 +426,7 @@
                                         className="bg-white rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-all duration-300 hover:shadow-2xl"
                                     >
                                         <div className="aspect-square overflow-hidden bg-gray-100 relative">
-                                            {photo.media_type === 'video' || photo.image_data?.startsWith('data:video') ? (
+                                            {photo.media_type === 'video' ? (
                                                 <video
                                                     src={photo.image_data}
                                                     controls
@@ -555,7 +521,6 @@
                                             onChange={(e) => setGuestName(e.target.value)}
                                             placeholder="Enter your name"
                                             className="w-full px-4 py-2 border-2 border-rose-200 rounded-lg focus:outline-none focus:border-rose-400 transition-colors"
-                                            disabled={isUploading}
                                         />
                                     </div>
 
@@ -565,36 +530,26 @@
                                         </label>
                                         <input
                                             type="file"
-                                            accept="image/*,video/*"
+                                            accept="image/*"
                                             onChange={handleFileSelect}
                                             className="hidden"
                                             id="photo-upload"
-                                            disabled={isUploading}
                                         />
                                         <label
                                             htmlFor="photo-upload"
-                                            className={`w-full h-48 border-2 border-dashed border-rose-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-rose-400 hover:bg-rose-50 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                            className="w-full h-48 border-2 border-dashed border-rose-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-rose-400 hover:bg-rose-50 transition-all"
                                         >
                                             {previewUrl ? (
-                                                mediaType === 'video' ? (
-                                                    <video
-                                                        src={previewUrl}
-                                                        className="w-full h-full object-cover rounded-lg"
-                                                        controls
-                                                        playsInline
-                                                    />
-                                                ) : (
-                                                    <img
-                                                        src={previewUrl}
-                                                        alt="Preview"
-                                                        className="w-full h-full object-cover rounded-lg"
-                                                    />
-                                                )
+                                                <img
+                                                    src={previewUrl}
+                                                    alt="Preview"
+                                                    className="w-full h-full object-cover rounded-lg"
+                                                />
                                             ) : (
                                                 <>
                                                     <Upload size={40} className="text-rose-400 mb-2" />
                                                     <p className="text-rose-600 font-medium">Click to upload</p>
-                                                    <p className="text-sm text-gray-500 mt-1">Photo (max 5MB) or Video (max 20MB)</p>
+                                                    <p className="text-sm text-gray-500 mt-1">JPG, PNG or GIF (max 5MB)</p>
                                                 </>
                                             )}
                                         </label>
