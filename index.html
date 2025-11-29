@@ -186,10 +186,10 @@
                         return;
                     }
 
-                    // Check file size (limit to 50MB for videos, 5MB for images)
-                    const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 5 * 1024 * 1024;
+                    // Check file size (limit to 20MB for videos, 5MB for images)
+                    const maxSize = file.type.startsWith('video/') ? 20 * 1024 * 1024 : 5 * 1024 * 1024;
                     if (file.size > maxSize) {
-                        const maxSizeMB = file.type.startsWith('video/') ? '50MB' : '5MB';
+                        const maxSizeMB = file.type.startsWith('video/') ? '20MB' : '5MB';
                         alert(`File too large! Please choose a file under ${maxSizeMB}.`);
                         return;
                     }
@@ -208,49 +208,71 @@
 
                 setIsUploading(true);
                 try {
-                    const reader = new FileReader();
-                    reader.onloadend = async () => {
-                        try {
-                            console.log('Uploading with media_type:', mediaType);
-                            const { data, error } = await supabaseClient
-                                .from('photos')
-                                .insert([
-                                    {
-                                        guest_name: guestName.trim(),
-                                        image_data: reader.result,
-                                        timestamp: Date.now(),
-                                        likes: 0,
-                                        media_type: mediaType || 'image'
-                                    }
-                                ])
-                                .select();
+                    let mediaUrl;
+                    
+                    // For videos, upload to Supabase Storage
+                    if (mediaType === 'video') {
+                        const fileName = `${Date.now()}_${selectedImage.name}`;
+                        const { data: uploadData, error: uploadError } = await supabaseClient
+                            .storage
+                            .from('wedding-videos')
+                            .upload(fileName, selectedImage, {
+                                contentType: selectedImage.type
+                            });
 
-                            if (error) {
-                                console.error('Supabase error:', error);
-                                throw error;
-                            }
-
-                            console.log('Upload successful:', data);
-
-                            // Refresh photos
-                            await loadPhotos();
-                            
-                            setShowUploadModal(false);
-                            setSelectedImage(null);
-                            setPreviewUrl(null);
-                            setGuestName('');
-                            setMediaType('');
-                            setIsUploading(false);
-                        } catch (innerError) {
-                            console.error('Inner upload error:', innerError);
-                            alert('Upload failed: ' + innerError.message);
-                            setIsUploading(false);
+                        if (uploadError) {
+                            console.error('Storage upload error:', uploadError);
+                            throw new Error('Video upload failed. Please try a smaller video (under 20MB).');
                         }
-                    };
-                    reader.readAsDataURL(selectedImage);
+
+                        // Get public URL
+                        const { data: urlData } = supabaseClient
+                            .storage
+                            .from('wedding-videos')
+                            .getPublicUrl(fileName);
+                        
+                        mediaUrl = urlData.publicUrl;
+                    } else {
+                        // For images, use base64 as before
+                        const reader = new FileReader();
+                        mediaUrl = await new Promise((resolve, reject) => {
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(selectedImage);
+                        });
+                    }
+
+                    // Save to database
+                    const { data, error } = await supabaseClient
+                        .from('photos')
+                        .insert([
+                            {
+                                guest_name: guestName.trim(),
+                                image_data: mediaUrl,
+                                timestamp: Date.now(),
+                                likes: 0,
+                                media_type: mediaType || 'image'
+                            }
+                        ])
+                        .select();
+
+                    if (error) {
+                        console.error('Database error:', error);
+                        throw error;
+                    }
+
+                    // Refresh photos
+                    await loadPhotos();
+                    
+                    setShowUploadModal(false);
+                    setSelectedImage(null);
+                    setPreviewUrl(null);
+                    setGuestName('');
+                    setMediaType('');
+                    setIsUploading(false);
                 } catch (error) {
                     console.error('Error uploading:', error);
-                    alert('Failed to upload: ' + error.message);
+                    alert(error.message || 'Failed to upload. Please try again.');
                     setIsUploading(false);
                 }
             };
@@ -572,7 +594,7 @@
                                                 <>
                                                     <Upload size={40} className="text-rose-400 mb-2" />
                                                     <p className="text-rose-600 font-medium">Click to upload</p>
-                                                    <p className="text-sm text-gray-500 mt-1">Photo (max 5MB) or Video (max 50MB)</p>
+                                                    <p className="text-sm text-gray-500 mt-1">Photo (max 5MB) or Video (max 20MB)</p>
                                                 </>
                                             )}
                                         </label>
