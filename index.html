@@ -22,7 +22,7 @@
             'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkcXVuZHJibWxzd2NpdWZkaHR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5OTQ3NDQsImV4cCI6MjA3OTU3MDc0NH0.p5R9Nl_4FVoNn5L_gnzdhNA8vgxvcHBprcWqIYS5DQw'
         );
 
-        // Icons
+        // Lucide icons as inline SVG components
         const Camera = ({ size = 24, className = "" }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
                 <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
@@ -96,10 +96,11 @@
             const [isAdmin, setIsAdmin] = useState(false);
             const [showAdminLogin, setShowAdminLogin] = useState(false);
             const [adminPassword, setAdminPassword] = useState('');
-            const [mediaType, setMediaType] = useState('');
-            const ADMIN_PASSWORD = 'ShadeOfLove2024';
+            const ADMIN_PASSWORD = 'ShadeOfLove2024'; // Change this to your desired password
+            const [mediaType, setMediaType] = useState(''); // 'image' or 'video'
 
             useEffect(() => {
+                // Generate or retrieve user ID
                 let uid = localStorage.getItem('wedding_user_id');
                 if (!uid) {
                     uid = 'user_' + Math.random().toString(36).substr(2, 9);
@@ -110,24 +111,34 @@
                 loadPhotos();
                 loadUserLikes(uid);
 
+                // Check if already logged in as admin
                 const adminStatus = localStorage.getItem('wedding_admin');
                 if (adminStatus === 'true') {
                     setIsAdmin(true);
                 }
 
+                // Set up real-time subscription for new photos only
                 const photosSubscription = supabaseClient
                     .channel('photos_channel')
                     .on('postgres_changes', 
                         { event: 'INSERT', schema: 'public', table: 'photos' },
-                        () => loadPhotos()
+                        (payload) => {
+                            console.log('New photo added:', payload);
+                            loadPhotos();
+                        }
                     )
                     .on('postgres_changes', 
                         { event: 'DELETE', schema: 'public', table: 'photos' },
-                        () => loadPhotos()
+                        (payload) => {
+                            console.log('Photo deleted:', payload);
+                            loadPhotos();
+                        }
                     )
                     .subscribe();
 
-                return () => photosSubscription.unsubscribe();
+                return () => {
+                    photosSubscription.unsubscribe();
+                };
             }, []);
 
             const loadPhotos = async () => {
@@ -137,6 +148,7 @@
                         .from('photos')
                         .select('*')
                         .order('timestamp', { ascending: false });
+
                     if (error) throw error;
                     setPhotos(data || []);
                 } catch (error) {
@@ -152,8 +164,10 @@
                         .from('photo_likes')
                         .select('photo_id')
                         .eq('user_id', uid);
+
                     if (error) throw error;
-                    setLikedPhotos(new Set(data.map(like => like.photo_id)));
+                    const likedIds = new Set(data.map(like => like.photo_id));
+                    setLikedPhotos(likedIds);
                 } catch (error) {
                     console.error('Error loading likes:', error);
                 }
@@ -162,6 +176,7 @@
             const handleFileSelect = (e) => {
                 const file = e.target.files[0];
                 if (file) {
+                    // Check if it's image or video
                     if (file.type.startsWith('image/')) {
                         setMediaType('image');
                     } else if (file.type.startsWith('video/')) {
@@ -171,16 +186,19 @@
                         return;
                     }
 
-                    const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+                    // Check file size (limit to 20MB for videos, 5MB for images)
+                    const maxSize = file.type.startsWith('video/') ? 20 * 1024 * 1024 : 5 * 1024 * 1024;
                     if (file.size > maxSize) {
-                        const maxSizeMB = file.type.startsWith('video/') ? '50MB' : '10MB';
+                        const maxSizeMB = file.type.startsWith('video/') ? '20MB' : '5MB';
                         alert(`File too large! Please choose a file under ${maxSizeMB}.`);
                         return;
                     }
                     
                     setSelectedImage(file);
                     const reader = new FileReader();
-                    reader.onloadend = () => setPreviewUrl(reader.result);
+                    reader.onloadend = () => {
+                        setPreviewUrl(reader.result);
+                    };
                     reader.readAsDataURL(file);
                 }
             };
@@ -192,6 +210,7 @@
                 try {
                     let mediaUrl;
                     
+                    // For videos, upload to Supabase Storage
                     if (mediaType === 'video') {
                         const fileName = `${Date.now()}_${selectedImage.name}`;
                         const { data: uploadData, error: uploadError } = await supabaseClient
@@ -203,9 +222,10 @@
 
                         if (uploadError) {
                             console.error('Storage upload error:', uploadError);
-                            throw new Error('Video upload failed. Please try a smaller video (under 50MB).');
+                            throw new Error('Video upload failed. Please try a smaller video (under 20MB).');
                         }
 
+                        // Get public URL
                         const { data: urlData } = supabaseClient
                             .storage
                             .from('wedding-videos')
@@ -213,6 +233,7 @@
                         
                         mediaUrl = urlData.publicUrl;
                     } else {
+                        // For images, use base64 as before
                         const reader = new FileReader();
                         mediaUrl = await new Promise((resolve, reject) => {
                             reader.onloadend = () => resolve(reader.result);
@@ -221,15 +242,18 @@
                         });
                     }
 
+                    // Save to database
                     const { data, error } = await supabaseClient
                         .from('photos')
-                        .insert([{
-                            guest_name: guestName.trim(),
-                            image_data: mediaUrl,
-                            timestamp: Date.now(),
-                            likes: 0,
-                            media_type: mediaType || 'image'
-                        }])
+                        .insert([
+                            {
+                                guest_name: guestName.trim(),
+                                image_data: mediaUrl,
+                                timestamp: Date.now(),
+                                likes: 0,
+                                media_type: mediaType || 'image'
+                            }
+                        ])
                         .select();
 
                     if (error) {
@@ -237,6 +261,7 @@
                         throw error;
                     }
 
+                    // Refresh photos
                     await loadPhotos();
                     
                     setShowUploadModal(false);
@@ -257,10 +282,14 @@
                 const photo = photos.find(p => p.id === photoId);
                 if (!photo) return;
 
+                // Update UI immediately (optimistic update)
                 const newLikedPhotos = new Set(likedPhotos);
                 const updatedPhotos = photos.map(p => {
                     if (p.id === photoId) {
-                        return { ...p, likes: isLiked ? Math.max(0, p.likes - 1) : p.likes + 1 };
+                        return {
+                            ...p,
+                            likes: isLiked ? Math.max(0, p.likes - 1) : p.likes + 1
+                        };
                     }
                     return p;
                 });
@@ -274,16 +303,32 @@
                 setLikedPhotos(newLikedPhotos);
                 setPhotos(updatedPhotos);
 
+                // Then update database in background
                 try {
                     if (isLiked) {
-                        await supabaseClient.from('photo_likes').delete().eq('photo_id', photoId).eq('user_id', userId);
-                        await supabaseClient.from('photos').update({ likes: Math.max(0, photo.likes - 1) }).eq('id', photoId);
+                        await supabaseClient
+                            .from('photo_likes')
+                            .delete()
+                            .eq('photo_id', photoId)
+                            .eq('user_id', userId);
+
+                        await supabaseClient
+                            .from('photos')
+                            .update({ likes: Math.max(0, photo.likes - 1) })
+                            .eq('id', photoId);
                     } else {
-                        await supabaseClient.from('photo_likes').insert([{ photo_id: photoId, user_id: userId }]);
-                        await supabaseClient.from('photos').update({ likes: photo.likes + 1 }).eq('id', photoId);
+                        await supabaseClient
+                            .from('photo_likes')
+                            .insert([{ photo_id: photoId, user_id: userId }]);
+
+                        await supabaseClient
+                            .from('photos')
+                            .update({ likes: photo.likes + 1 })
+                            .eq('id', photoId);
                     }
                 } catch (error) {
                     console.error('Error updating like:', error);
+                    // Revert on error
                     setLikedPhotos(likedPhotos);
                     setPhotos(photos);
                 }
@@ -307,13 +352,21 @@
             };
 
             const handleDeletePhoto = async (photoId) => {
-                if (!window.confirm('Are you sure you want to delete this photo?')) return;
+                if (!window.confirm('Are you sure you want to delete this photo?')) {
+                    return;
+                }
 
+                // Remove from UI immediately
                 const filteredPhotos = photos.filter(p => p.id !== photoId);
                 setPhotos(filteredPhotos);
 
                 try {
-                    const { error } = await supabaseClient.from('photos').delete().eq('id', photoId);
+                    // Delete from database
+                    const { error } = await supabaseClient
+                        .from('photos')
+                        .delete()
+                        .eq('id', photoId);
+
                     if (error) {
                         console.error('Delete error:', error);
                         throw error;
@@ -321,12 +374,14 @@
                 } catch (error) {
                     console.error('Error deleting photo:', error);
                     alert('Failed to delete photo: ' + error.message);
+                    // Reload photos to restore if delete failed
                     await loadPhotos();
                 }
             };
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-rose-50 via-pink-50 to-purple-50">
+                    {/* Header */}
                     <div className="bg-white/80 backdrop-blur-sm shadow-md sticky top-0 z-10">
                         <div className="max-w-6xl mx-auto px-4 py-6">
                             <div className="flex items-center justify-between">
@@ -338,8 +393,36 @@
                                     <p className="text-rose-700 mt-1 text-sm md:text-base">Share your magical moments</p>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    {isAdmin ? (
-                                        <button onClick={() => setShowUploadModal(true)} className="bg-gradient-to-r from-rose-500 to-pink-500 text-white px-4 md:px-6 py-2 md:py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 hover:scale-105">
+                                    {isAdmin && (
+                                        <button
+                                            onClick={handleAdminLogout}
+                                            className="p-2 md:p-3 rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition-all duration-300 flex items-center gap-2"
+                                            title="Admin logout"
+                                        >
+                                            <Lock size={20} />
+                                            <span className="hidden md:inline text-sm">Logout</span>
+                                        </button>
+                                    )}
+                                    {!isAdmin && (
+                                        <button
+                                            onClick={() => setShowAdminLogin(true)}
+                                            className="p-2 md:p-3 rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition-all duration-300"
+                                            title="Admin login"
+                                        >
+                                            <Lock size={20} />
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={loadPhotos}
+                                        className="p-2 md:p-3 rounded-full bg-rose-100 text-rose-600 hover:bg-rose-200 transition-all duration-300"
+                                        title="Refresh photos"
+                                    >
+                                        <RefreshCw size={20} />
+                                    </button>
+                                    <button
+                                        onClick={() => setShowUploadModal(true)}
+                                        className="bg-gradient-to-r from-rose-500 to-pink-500 text-white px-4 md:px-6 py-2 md:py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 hover:scale-105"
+                                    >
                                         <Camera size={20} />
                                         <span className="hidden sm:inline">Upload Photo</span>
                                         <span className="sm:hidden">Upload</span>
@@ -349,6 +432,7 @@
                         </div>
                     </div>
 
+                    {/* Photo Gallery */}
                     <div className="max-w-6xl mx-auto px-4 py-8">
                         {loading ? (
                             <div className="flex flex-col items-center justify-center py-20">
@@ -360,7 +444,10 @@
                                 <Camera size={64} className="mx-auto text-rose-300 mb-4" />
                                 <h3 className="text-xl text-rose-900 font-medium mb-2">No photos yet</h3>
                                 <p className="text-rose-600 mb-6">Be the first to share a special moment!</p>
-                                <button onClick={() => setShowUploadModal(true)} className="bg-gradient-to-r from-rose-500 to-pink-500 text-white px-6 py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300 inline-flex items-center gap-2">
+                                <button
+                                    onClick={() => setShowUploadModal(true)}
+                                    className="bg-gradient-to-r from-rose-500 to-pink-500 text-white px-6 py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300 inline-flex items-center gap-2"
+                                >
                                     <Upload size={20} />
                                     Upload First Photo
                                 </button>
@@ -368,27 +455,51 @@
                         ) : (
                             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                                 {photos.map((photo) => (
-                                    <div key={photo.id} className="bg-white rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-all duration-300 hover:shadow-2xl">
+                                    <div
+                                        key={photo.id}
+                                        className="bg-white rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-all duration-300 hover:shadow-2xl"
+                                    >
                                         <div className="aspect-square overflow-hidden bg-gray-100 relative">
                                             {photo.media_type === 'video' || photo.image_data?.startsWith('data:video') ? (
-                                                <video src={photo.image_data} controls className="w-full h-full object-cover" playsInline>
+                                                <video
+                                                    src={photo.image_data}
+                                                    controls
+                                                    className="w-full h-full object-cover"
+                                                    playsInline
+                                                >
                                                     Your browser does not support video.
                                                 </video>
                                             ) : (
-                                                <img src={photo.image_data} alt={`Photo by ${photo.guest_name}`} className="w-full h-full object-cover" />
+                                                <img
+                                                    src={photo.image_data}
+                                                    alt={`Photo by ${photo.guest_name}`}
+                                                    className="w-full h-full object-cover"
+                                                />
                                             )}
                                         </div>
                                         <div className="p-4">
                                             <p className="font-medium text-rose-900 mb-2">{photo.guest_name}</p>
                                             <div className="flex items-center justify-between">
-                                                <p className="text-sm text-gray-500">{new Date(photo.timestamp).toLocaleDateString()}</p>
+                                                <p className="text-sm text-gray-500">
+                                                    {new Date(photo.timestamp).toLocaleDateString()}
+                                                </p>
                                                 <div className="flex items-center gap-2">
-                                                    <button onClick={() => handleLike(photo.id)} className="flex items-center gap-1 text-rose-500 hover:text-rose-600 transition-colors">
-                                                        <Heart size={20} className={likedPhotos.has(photo.id) ? 'fill-rose-500' : ''} />
+                                                    <button
+                                                        onClick={() => handleLike(photo.id)}
+                                                        className="flex items-center gap-1 text-rose-500 hover:text-rose-600 transition-colors"
+                                                    >
+                                                        <Heart
+                                                            size={20}
+                                                            className={likedPhotos.has(photo.id) ? 'fill-rose-500' : ''}
+                                                        />
                                                         <span className="text-sm font-medium">{photo.likes}</span>
                                                     </button>
                                                     {isAdmin && (
-                                                        <button onClick={() => handleDeletePhoto(photo.id)} className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors" title="Delete photo">
+                                                        <button
+                                                            onClick={() => handleDeletePhoto(photo.id)}
+                                                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                                                            title="Delete photo"
+                                                        >
                                                             <Trash2 size={18} />
                                                         </button>
                                                     )}
@@ -401,10 +512,22 @@
                         )}
                     </div>
 
+                    {/* Upload Modal */}
                     {showUploadModal && (
                         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                             <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 relative">
-                                <button onClick={() => { if (!isUploading) { setShowUploadModal(false); setSelectedImage(null); setPreviewUrl(null); setGuestName(''); } }} disabled={isUploading} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                <button
+                                    onClick={() => {
+                                        if (!isUploading) {
+                                            setShowUploadModal(false);
+                                            setSelectedImage(null);
+                                            setPreviewUrl(null);
+                                            setGuestName('');
+                                        }
+                                    }}
+                                    disabled={isUploading}
+                                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
                                     <X size={24} />
                                 </button>
 
@@ -416,38 +539,72 @@
                                 {isUploading && (
                                     <div className="absolute inset-0 bg-white/90 rounded-3xl flex flex-col items-center justify-center z-10">
                                         <Loader2 size={48} className="animate-spin text-rose-500 mb-4" />
-                                        <p className="text-rose-700 font-medium">Uploading your {mediaType}...</p>
+                                        <p className="text-rose-700 font-medium">Uploading your photo...</p>
                                         <p className="text-rose-600 text-sm mt-2">Please wait, don't close this window</p>
                                     </div>
                                 )}
 
                                 <div className="space-y-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
-                                        <input type="text" value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="Enter your name" className="w-full px-4 py-2 border-2 border-rose-200 rounded-lg focus:outline-none focus:border-rose-400 transition-colors" disabled={isUploading} />
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Your Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={guestName}
+                                            onChange={(e) => setGuestName(e.target.value)}
+                                            placeholder="Enter your name"
+                                            className="w-full px-4 py-2 border-2 border-rose-200 rounded-lg focus:outline-none focus:border-rose-400 transition-colors"
+                                            disabled={isUploading}
+                                        />
                                     </div>
 
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">Choose Photo or Video</label>
-                                        <input type="file" accept="image/*,video/*" onChange={handleFileSelect} className="hidden" id="photo-upload" disabled={isUploading} />
-                                        <label htmlFor="photo-upload" className={`w-full h-48 border-2 border-dashed border-rose-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-rose-400 hover:bg-rose-50 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Choose Photo
+                                        </label>
+                                        <input
+                                            type="file"
+                                            accept="image/*,video/*"
+                                            onChange={handleFileSelect}
+                                            className="hidden"
+                                            id="photo-upload"
+                                            disabled={isUploading}
+                                        />
+                                        <label
+                                            htmlFor="photo-upload"
+                                            className={`w-full h-48 border-2 border-dashed border-rose-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-rose-400 hover:bg-rose-50 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        >
                                             {previewUrl ? (
                                                 mediaType === 'video' ? (
-                                                    <video src={previewUrl} className="w-full h-full object-cover rounded-lg" controls playsInline />
+                                                    <video
+                                                        src={previewUrl}
+                                                        className="w-full h-full object-cover rounded-lg"
+                                                        controls
+                                                        playsInline
+                                                    />
                                                 ) : (
-                                                    <img src={previewUrl} alt="Preview" className="w-full h-full object-cover rounded-lg" />
+                                                    <img
+                                                        src={previewUrl}
+                                                        alt="Preview"
+                                                        className="w-full h-full object-cover rounded-lg"
+                                                    />
                                                 )
                                             ) : (
                                                 <>
                                                     <Upload size={40} className="text-rose-400 mb-2" />
                                                     <p className="text-rose-600 font-medium">Click to upload</p>
-                                                    <p className="text-sm text-gray-500 mt-1">Photo (max 10MB) or Video (max 50MB)</p>
+                                                    <p className="text-sm text-gray-500 mt-1">Photo (max 5MB) or Video (max 20MB)</p>
                                                 </>
                                             )}
                                         </label>
                                     </div>
 
-                                    <button onClick={handleUpload} disabled={!selectedImage || !guestName.trim() || isUploading} className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                                    <button
+                                        onClick={handleUpload}
+                                        disabled={!selectedImage || !guestName.trim() || isUploading}
+                                        className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                    >
                                         {isUploading ? (
                                             <>
                                                 <Loader2 size={20} className="animate-spin" />
@@ -456,7 +613,7 @@
                                         ) : (
                                             <>
                                                 <Upload size={20} />
-                                                Share {mediaType === 'video' ? 'Video' : 'Photo'}
+                                                Share Photo
                                             </>
                                         )}
                                     </button>
@@ -465,10 +622,17 @@
                         </div>
                     )}
 
+                    {/* Admin Login Modal */}
                     {showAdminLogin && (
                         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                             <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 relative">
-                                <button onClick={() => { setShowAdminLogin(false); setAdminPassword(''); }} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors">
+                                <button
+                                    onClick={() => {
+                                        setShowAdminLogin(false);
+                                        setAdminPassword('');
+                                    }}
+                                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors"
+                                >
                                     <X size={24} />
                                 </button>
 
@@ -479,11 +643,28 @@
 
                                 <div className="space-y-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">Admin Password</label>
-                                        <input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} onKeyPress={(e) => { if (e.key === 'Enter') handleAdminLogin(); }} placeholder="Enter admin password" className="w-full px-4 py-2 border-2 border-rose-200 rounded-lg focus:outline-none focus:border-rose-400 transition-colors" autoFocus />
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Admin Password
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={adminPassword}
+                                            onChange={(e) => setAdminPassword(e.target.value)}
+                                            onKeyPress={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    handleAdminLogin();
+                                                }
+                                            }}
+                                            placeholder="Enter admin password"
+                                            className="w-full px-4 py-2 border-2 border-rose-200 rounded-lg focus:outline-none focus:border-rose-400 transition-colors"
+                                            autoFocus
+                                        />
                                     </div>
 
-                                    <button onClick={handleAdminLogin} className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300">
+                                    <button
+                                        onClick={handleAdminLogin}
+                                        className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white py-3 rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300"
+                                    >
                                         Login
                                     </button>
                                 </div>
@@ -497,16 +678,4 @@
         ReactDOM.render(<WeddingPhotoGallery />, document.getElementById('root'));
     </script>
 </body>
-</html> onClick={handleAdminLogout} className="p-2 md:p-3 rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition-all duration-300 flex items-center gap-2" title="Admin logout">
-                                            <Lock size={20} />
-                                            <span className="hidden md:inline text-sm">Logout</span>
-                                        </button>
-                                    ) : (
-                                        <button onClick={() => setShowAdminLogin(true)} className="p-2 md:p-3 rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition-all duration-300" title="Admin login">
-                                            <Lock size={20} />
-                                        </button>
-                                    )}
-                                    <button onClick={loadPhotos} className="p-2 md:p-3 rounded-full bg-rose-100 text-rose-600 hover:bg-rose-200 transition-all duration-300" title="Refresh photos">
-                                        <RefreshCw size={20} />
-                                    </button>
-                                    <button
+</html>
